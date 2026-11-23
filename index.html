@@ -1,613 +1,690 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>ASCII Lily Story — For Emy</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #070a14;
-      --fg: #f4ecd0;
-      --muted: rgba(244, 236, 208, 0.58);
-      --panel: rgba(11, 16, 30, 0.72);
-      --border: rgba(244, 236, 208, 0.16);
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ASCII Lily Bouquet</title>
+<style>
+:root{color-scheme:dark;--bg:#070a14;--fg:#f4ecd0}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+
+.hint{
+  position:fixed;
+  bottom:calc(env(safe-area-inset-bottom,0px) + 10px);
+  left:0;right:0;
+  text-align:center;
+  font:12px system-ui,sans-serif;
+  color:#fff6;
+  pointer-events:none;
+}
+</style></head><body>
+<canvas id="c"></canvas>
+<div class="hint" id="hint">tap anywhere to advance the story</div>
+<script>
+const cv=document.getElementById('c'),out=cv.getContext('2d');
+const off=document.createElement('canvas'),octx=off.getContext('2d',{willReadFrequently:true});
+const hintEl=document.getElementById('hint');
+let ctx=octx,W,H,S,DPR,CW,CH,COLS,ROWS;
+
+function resize(){
+  DPR=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;
+  cv.width=W*DPR;cv.height=H*DPR;
+  S=Math.min(W/620,H/820);
+  CW=Math.max(3.2,W/185);
+  CH=CW*1.65;
+  COLS=Math.floor(W/CW);
+  ROWS=Math.floor(H/CH);
+  off.width=COLS;off.height=ROWS;
+}
+addEventListener('resize',resize);resize();
+
+const R=(a,b)=>a+Math.random()*(b-a),L=(a,b,t)=>a+(b-a)*t,cl=x=>Math.max(0,Math.min(1,x));
+const easeOut=t=>1-Math.pow(1-cl(t),3);
+const easeInOut=t=>{t=cl(t);return t*t*(3-2*t)};
+const back=t=>{t=cl(t);const c=1.2;return 1+(c+1)*Math.pow(t-1,3)+c*Math.pow(t-1,2)};
+
+/* ---------- Stargazer, Tiger, Easter & Asiatic Lily Palettes ---------- */
+const PAL=[
+ {t:'#ff85be',m:'#d91e78',th:'#b5e655',sp:'#590428'},
+ {t:'#ff5938',m:'#cc1b14',th:'#ffbe3b',sp:'#3b0505'},
+ {t:'#ffe875',m:'#e8a317',th:'#88c43b',sp:'#6e3200'},
+ {t:'#fffaf0',m:'#f2e6cf',th:'#9fd455',sp:'#a88938'},
+ {t:'#ffb085',m:'#e85a3c',th:'#c8e665',sp:'#5e1414'},
+ {t:'#f28ce3',m:'#9c1c8e',th:'#c2eb63',sp:'#42033b'},
+];
+
+// [x, y, size, palette, delay, maxOpen, tiltAngle]
+const SPEC=[
+ [0,-455,1.05,3,1.1,1,0.05],
+ [-135,-360,1.12,0,.4,1,-0.28],
+ [130,-365,1.12,1,.7,1,0.28],
+ [-215,-245,1.05,2,.2,1,-0.45],
+ [210,-250,1.05,4,.9,1,0.45],
+ [-65,-315,1.2,5,.15,1,-0.12],
+ [75,-265,1.22,0,.55,1,0.16],
+ [-145,-155,1.08,1,1.0,1,-0.32],
+ [145,-150,1.08,3,.35,1,0.32],
+ [-25,-195,1.15,2,.8,1,-0.05],
+ [-245,-345,.55,0,.6,.12,-0.5],
+ [240,-350,.55,2,.25,.12,0.5],
+ [15,-525,.5,3,.95,.1,0.08]
+];
+
+const FIELD_SPEC=[
+ [-430,-230,0.88,0,0.0,1,-0.36],
+ [-365,-335,0.96,2,0.2,1,-0.26],
+ [-295,-215,1.02,1,0.4,1,-0.22],
+ [-225,-360,1.08,5,0.5,1,-0.18],
+ [-155,-245,1.05,3,0.6,1,-0.12],
+ [-85,-380,1.15,0,0.7,1,-0.08],
+ [-15,-265,1.12,4,0.8,1,-0.02],
+ [55,-395,1.18,2,0.9,1,0.04],
+ [125,-255,1.08,1,1.0,1,0.10],
+ [195,-365,1.10,3,1.1,1,0.16],
+ [265,-235,1.04,5,1.2,1,0.22],
+ [335,-340,0.98,0,1.3,1,0.28],
+ [405,-225,0.90,2,1.4,1,0.35],
+ [-330,-150,0.78,4,1.5,0.85,-0.30],
+ [-190,-145,0.82,1,1.6,0.9,-0.16],
+ [-45,-155,0.86,3,1.7,0.95,-0.04],
+ [105,-150,0.84,0,1.8,0.9,0.08],
+ [250,-148,0.80,2,1.9,0.85,0.20],
+ [370,-155,0.76,5,2.0,0.8,0.30]
+];
+
+function makeFlowerList(specList){
+  return specList.map(s=>({
+    x:s[0],y:s[1],size:s[2],pal:PAL[s[3]],delay:s[4],max:s[5],tilt:s[6],
+    bx:s[0]*.12+R(-10,10),ph:R(0,6.28),
+    spots:[...Array(14)].map(()=>({u:R(.16,.58),v:R(-.65,.65)})),
+    a0:R(0,1.0)
+  }));
+}
+
+const flowers=makeFlowerList(SPEC);
+const fieldFlowers=makeFlowerList(FIELD_SPEC);
+
+const leaves=[...Array(24)].map((_,i)=>{
+  const f=i/23;
+  return{
+    bx:L(-50,50,f)+R(-6,6),
+    by:R(-10,-160),
+    ang:L(-1.1,1.1,f)+R(-.15,.15),
+    len:R(120,240)*(1-Math.abs(f-.5)*.35),
+    d:R(0,1.3),
+    w:R(6,10),
+    sh:R(.6,1)
+  };
+});
+
+/* ---------- background hearts, stars & fireflies ---------- */
+const hearts=[...Array(24)].map(()=>mkHeart(true));
+function mkHeart(init){return{x:R(0,1),y:init?R(0,1):1.1,r:R(6,22),v:R(.012,.035),ph:R(0,6.28),a:R(.3,.7),hue:R(330,355)}}
+const stars=[...Array(95)].map(()=>({x:R(0,1),y:R(0,1),r:R(.4,1.4),ph:R(0,6.28)}));
+const fireflies=[...Array(42)].map(()=>({
+  x:R(0.04,0.96),
+  y:R(0.12,0.84),
+  vx:R(-0.025,0.025),
+  vy:R(-0.018,0.018),
+  ph:R(0,6.28),
+  spd:R(1.8,4.2)
+}));
+
+function heartPath(r){
+  ctx.beginPath();ctx.moveTo(0,r*.9);
+  ctx.bezierCurveTo(-r*1.3,-r*.1,-r*.6,-r*1.0,0,-r*.35);
+  ctx.bezierCurveTo(r*.6,-r*1.0,r*1.3,-r*.1,0,r*.9);ctx.closePath();
+}
+
+function drawHearts(t,dt,extraBoost){
+  const countBoost=extraBoost?1.35:0.85;
+  for(const h of hearts){
+    h.y-=h.v*dt*(extraBoost?1.3:0.9);
+    if(h.y<-.1)Object.assign(h,mkHeart(false));
+    const x=h.x*W+Math.sin(t*.7+h.ph)*18*S,y=h.y*H,r=h.r*S*1.2*(1+.08*Math.sin(t*2+h.ph));
+    ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(t*.6+h.ph)*.25);
+    ctx.globalAlpha=cl(h.a*countBoost*(.7+.3*Math.sin(t*1.5+h.ph)));
+    ctx.fillStyle=`hsl(${h.hue},90%,${60+h.r*.6}%)`;heartPath(r);ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawSky(t){
+  const g=out.createRadialGradient(W/2,H*.55,10,W/2,H*.55,Math.max(W,H)*.75);
+  g.addColorStop(0,'#150d28');g.addColorStop(.6,'#090a1a');g.addColorStop(1,'#04060d');
+  out.fillStyle=g;out.fillRect(0,0,W,H);
+  out.fillStyle='#fff';
+  for(const s of stars){
+    out.globalAlpha=.2+.6*Math.abs(Math.sin(t*1.2+s.ph));
+    out.fillRect(s.x*W,s.y*H,s.r*1.5,s.r*1.5);
+  }
+  out.globalAlpha=1;
+}
+
+function drawFireflies(nowSec,dt,alpha){
+  if(alpha<=0.02)return;
+  out.save();
+  out.textAlign='center';
+  out.textBaseline='middle';
+  for(const f of fireflies){
+    f.x+=f.vx*dt+Math.sin(nowSec*0.9+f.ph)*0.008*dt;
+    f.y+=f.vy*dt+Math.cos(nowSec*1.1+f.ph)*0.008*dt;
+    if(f.x<0.04)f.x=0.96;if(f.x>0.96)f.x=0.04;
+    if(f.y<0.12)f.y=0.84;if(f.y>0.84)f.y=0.12;
+
+    const pulse=0.35+0.65*(0.5+0.5*Math.sin(nowSec*f.spd+f.ph));
+    const px=f.x*W,py=f.y*H;
+
+    const rad=Math.max(8,CH*1.5)*pulse;
+    const grd=out.createRadialGradient(px,py,1,px,py,rad);
+    grd.addColorStop(0,`rgba(255,242,145,${alpha*pulse*0.85})`);
+    grd.addColorStop(1,'rgba(255,220,90,0)');
+    out.fillStyle=grd;
+    out.beginPath();out.arc(px,py,rad,0,6.3);out.fill();
+
+    out.font=`bold ${Math.max(10,CH*0.95)}px ui-monospace,Menlo,Consolas,monospace`;
+    out.fillStyle=`rgba(255,245,165,${alpha*pulse})`;
+    out.fillText(pulse>0.72?'*':'.',px,py);
+  }
+  out.restore();
+}
+
+const RAMP='.:-=+*xX%#@';
+function toAscii(t,wiltAmt,reviveGlow){
+  const d=octx.getImageData(0,0,COLS,ROWS).data;
+  out.font=`bold ${CH*.96}px ui-monospace,Menlo,Consolas,monospace`;out.textBaseline='top';
+  const fr=Math.floor(t*7),n=RAMP.length-1;
+  const amp=1.38+reviveGlow*0.24-wiltAmt*0.32;
+  for(let j=0;j<ROWS;j++)for(let i=0;i<COLS;i++){
+    const p=(j*COLS+i)*4,r=d[p],g=d[p+1],b=d[p+2],m=Math.max(r,g,b);
+    if(m<30)continue;
+    let k=Math.round(Math.sqrt(m/255)*n);
+    if(wiltAmt>0.15&&((i*11+j*17+fr)%4)===0)k=Math.max(0,k-1);
+    if(((i*7+j*13+fr)%5)===0)k=Math.max(0,k-1);
+
+    let rr=r*amp,gg=g*amp,bb=b*amp;
+    if(wiltAmt>0){
+      const lum=(rr+gg+bb)/3;
+      const mutedR=lum*1.08+18;
+      const mutedG=lum*0.98+14;
+      const mutedB=lum*0.72+8;
+      rr=L(rr,mutedR,wiltAmt*0.72);
+      gg=L(gg,mutedG,wiltAmt*0.72);
+      bb=L(bb,mutedB,wiltAmt*0.72);
+    }
+    out.fillStyle=`rgb(${cl(rr/255)*255|0},${cl(gg/255)*255|0},${cl(bb/255)*255|0})`;
+    out.fillText(RAMP[k],i*CW,j*CH);
+  }
+}
+
+/* ---------- ASCII Text Blocks ---------- */
+const SALUTATION="For my one and Emy,";
+const BODY_TEXT="I hope one day you'll bloom as vibrant and as beautiful as these colourful lilies. May our relationship grows as healthy as lilies kept in a flower garden. We might be miles apart but every night, every call, and every moment we bond keeps us closer.";
+const SIGNOFF="Sincerely yours, Brandow";
+
+const HEALTH_TEXT="In a lily's lifespan, there will be moments where the lily is not at its healthiest state. Our relationship is just the same. There will be times where we are not 100 percent, and that's alright.";
+const DROP_TEXT="Just like this drop of water, even the slightest touch of your affection, your presence, or even your reassuring words could turn our bad mornings, grumpy midnight, or lousy misunderstandings into a clear, vibrant, and cheerful moment.";
+const FIELD_TEXT="A field of lilies blooming with hearts and fireflies — Sincerely yours, Brandow";
+
+const GLYPHS=".:-=+*xX%#@~*";
+
+function wrapWords(text,maxCols){
+  const words=text.split(' ');
+  const lines=[];
+  let line='';
+  for(const w of words){
+    if(!line.length){
+      line=w;
+    } else if(line.length+1+w.length<=maxCols){
+      line+=' '+w;
+    } else {
+      lines.push(line);
+      line=w;
+    }
+  }
+  if(line.length)lines.push(line);
+  return lines;
+}
+
+function drawGlyphBlock(entries,elapsed,nowSec,startCol,maxCols,startRow,fadeOutAlpha){
+  if(fadeOutAlpha<=0.01||elapsed<=0)return;
+  out.font=`bold ${CH*1.02}px ui-monospace,Menlo,Consolas,monospace`;
+  out.textBaseline='top';
+
+  const charSpeed=32;
+  let charIndex=0;
+
+  entries.forEach((lineObj,lineIdx)=>{
+    const rowY=(startRow+lineIdx*1.45)*CH;
+    if(lineObj.role==='spacer')return;
+
+    const str=lineObj.txt;
+    let colOffset=0;
+    if(lineObj.role==='ornament'){
+      colOffset=Math.max(0,Math.floor((maxCols-str.length)/2));
+    } else if(lineObj.role==='signoff'){
+      colOffset=Math.max(0,maxCols-str.length);
     }
 
-    * {
-      box-sizing: border-box;
+    for(let i=0;i<str.length;i++){
+      const ch=str[i];
+      const idx=charIndex++;
+      if(ch===' ')continue;
+
+      const appearAt=idx/charSpeed;
+      const p=cl((elapsed-appearAt)/0.65);
+      if(p<=0)continue;
+
+      const x=(startCol+colOffset+i)*CW;
+      const y=rowY+(1-easeOut(p))*(CH*0.45);
+
+      let displayChar=ch;
+      if(p<0.72){
+        const seed=Math.floor(nowSec*16+idx*7+i*13);
+        const maxGlyphIdx=Math.min(GLYPHS.length-1,Math.floor((p/0.72)*GLYPHS.length));
+        displayChar=GLYPHS[Math.abs(seed)%(maxGlyphIdx+1)];
+      }
+
+      const baseAlpha=easeOut(Math.min(1,p*1.4))*fadeOutAlpha;
+      if(lineObj.role==='header'||lineObj.role==='signoff'){
+        out.fillStyle=p<0.72
+          ?`rgba(181,230,85,${baseAlpha})`
+          :`rgba(255,195,224,${baseAlpha})`;
+      } else if(lineObj.role==='ornament'){
+        const shimmer=0.75+0.25*Math.sin(nowSec*2.5+i);
+        out.fillStyle=`rgba(255,165,210,${baseAlpha*shimmer})`;
+      } else {
+        out.fillStyle=p<0.55
+          ?`rgba(255,150,200,${baseAlpha})`
+          :`rgba(244,236,208,${baseAlpha*0.96})`;
+      }
+
+      out.fillText(displayChar,x,y);
+    }
+  });
+}
+
+function drawAsciiMessage(stage,stageSec,prevFadeOut,nowSec){
+  const isMobile=W<=780;
+
+  if(stage===0){
+    const startT=4.6;
+    if(stageSec<startT)return;
+    const startCol=isMobile?Math.max(2,Math.floor(COLS*0.08)):Math.floor(COLS*0.56);
+    const endCol=isMobile?COLS-Math.max(2,Math.floor(COLS*0.08)):COLS-Math.max(3,Math.floor(COLS*0.05));
+    const maxCols=Math.max(22,endCol-startCol);
+
+    const lines=[
+      ...wrapWords(SALUTATION,maxCols).map(txt=>({txt,role:'header'})),
+      {txt:"",role:'spacer'},
+      ...wrapWords(BODY_TEXT,maxCols).map(txt=>({txt,role:'body'})),
+      {txt:"",role:'spacer'},
+      ...wrapWords(SIGNOFF,maxCols).map(txt=>({txt,role:'signoff'})),
+      {txt:"",role:'spacer'},
+      {txt:"~ * ~",role:'ornament'}
+    ];
+    const totalRows=lines.length*1.45;
+    const startRow=isMobile?Math.max(2,Math.floor(ROWS*0.04)):Math.max(3,Math.floor((ROWS-totalRows)*0.48));
+    drawGlyphBlock(lines,stageSec-startT,nowSec,startCol,maxCols,startRow,1);
+    return;
+  }
+
+  // Vanish previous dedication text cleanly on transition into stage 1
+  if(stage===1&&prevFadeOut>0.01){
+    const startCol=isMobile?Math.max(2,Math.floor(COLS*0.08)):Math.floor(COLS*0.56);
+    const endCol=isMobile?COLS-Math.max(2,Math.floor(COLS*0.08)):COLS-Math.max(3,Math.floor(COLS*0.05));
+    const maxCols=Math.max(22,endCol-startCol);
+    const lines=[
+      ...wrapWords(SALUTATION,maxCols).map(txt=>({txt,role:'header'})),
+      {txt:"",role:'spacer'},
+      ...wrapWords(BODY_TEXT,maxCols).map(txt=>({txt,role:'body'})),
+      {txt:"",role:'spacer'},
+      ...wrapWords(SIGNOFF,maxCols).map(txt=>({txt,role:'signoff'}))
+    ];
+    const totalRows=lines.length*1.45;
+    const startRow=isMobile?Math.max(2,Math.floor(ROWS*0.04)):Math.max(3,Math.floor((ROWS-totalRows)*0.48));
+    drawGlyphBlock(lines,999,nowSec,startCol,maxCols,startRow,prevFadeOut);
+  }
+
+  const startCol=isMobile?Math.max(2,Math.floor(COLS*0.08)):Math.floor(COLS*0.54);
+  const endCol=isMobile?COLS-Math.max(2,Math.floor(COLS*0.08)):COLS-Math.max(3,Math.floor(COLS*0.05));
+  const maxCols=Math.max(24,endCol-startCol);
+
+  if(stage===1){
+    const appearAt=2.4;
+    if(stageSec<appearAt)return;
+    const lines=[
+      ...wrapWords(HEALTH_TEXT,maxCols).map(txt=>({txt,role:'body'})),
+      {txt:"",role:'spacer'},
+      {txt:"~ * ~",role:'ornament'}
+    ];
+    const startRow=isMobile?Math.max(2,Math.floor(ROWS*0.04)):Math.max(4,Math.floor(ROWS*0.18));
+    drawGlyphBlock(lines,stageSec-appearAt,nowSec,startCol,maxCols,startRow,1);
+  } else if(stage===2){
+    const appearAt=1.4;
+    if(stageSec<appearAt)return;
+    const lines=[
+      ...wrapWords(DROP_TEXT,maxCols).map(txt=>({txt,role:'body'})),
+      {txt:"",role:'spacer'},
+      {txt:"~ * ~",role:'ornament'}
+    ];
+    const startRow=isMobile?Math.max(2,Math.floor(ROWS*0.04)):Math.max(4,Math.floor(ROWS*0.18));
+    drawGlyphBlock(lines,stageSec-appearAt,nowSec,startCol,maxCols,startRow,1);
+  } else if(stage===3){
+    const appearAt=1.2;
+    if(stageSec<appearAt)return;
+    const fullColStart=Math.max(2,Math.floor(COLS*0.10));
+    const fullMaxCols=Math.max(26,COLS-Math.floor(COLS*0.20));
+    const lines=[
+      ...wrapWords(FIELD_TEXT,fullMaxCols).map((txt,i,arr)=>({
+        txt,
+        role:i===arr.length-1?'signoff':'body'
+      }))
+    ];
+    const startRow=Math.max(2,Math.floor(ROWS*0.05));
+    drawGlyphBlock(lines,stageSec-appearAt,nowSec,fullColStart,fullMaxCols,startRow,1);
+  }
+}
+
+/* ---------- Water Drop Revival Effect ---------- */
+function drawWaterDrop(stageSec,nowSec){
+  const dropStart=0.25;
+  const hitTime=1.15;
+  const cx=W*0.5;
+  const targetY=H*0.56;
+
+  out.save();
+  out.textAlign='center';
+  out.textBaseline='middle';
+
+  if(stageSec>=dropStart&&stageSec<hitTime){
+    const p=(stageSec-dropStart)/(hitTime-dropStart);
+    const startY=H*0.12;
+    const curY=L(startY,targetY,p*p);
+    const swayX=Math.sin(nowSec*18)*3;
+
+    out.font=`bold ${Math.max(12,CH*1.15)}px ui-monospace,Menlo,Consolas,monospace`;
+    out.fillStyle='rgba(125,215,255,0.95)';
+    out.fillText('o',cx+swayX,curY);
+    out.fillText('|',cx+swayX,curY-CH*0.9);
+    out.fillStyle='rgba(185,238,255,0.75)';
+    out.fillText('.',cx+swayX,curY-CH*1.8);
+  } else if(stageSec>=hitTime&&stageSec<hitTime+3.0){
+    const after=stageSec-hitTime;
+    const fade=1-cl(after/3.0);
+    const rx=after*110*S+18;
+    const ry=after*26*S+6;
+
+    out.strokeStyle=`rgba(120,215,255,${fade*0.8})`;
+    out.lineWidth=1.6;
+    out.beginPath();
+    out.ellipse(cx,targetY+24*S,rx,ry,0,0,6.3);
+    out.stroke();
+
+    if(after>0.3){
+      const a2=after-0.3;
+      out.strokeStyle=`rgba(190,242,255,${fade*0.55})`;
+      out.beginPath();
+      out.ellipse(cx,targetY+24*S,a2*95*S+10,a2*22*S+4,0,0,6.3);
+      out.stroke();
     }
 
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: radial-gradient(circle at 50% 35%, #0e162b 0%, var(--bg) 72%);
-      color: var(--fg);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
+    out.font=`bold ${Math.max(10,CH*0.95)}px ui-monospace,Menlo,Consolas,monospace`;
+    out.fillStyle=`rgba(165,238,255,${fade})`;
+    out.fillText('*',cx-after*38*S,targetY-after*24*S);
+    out.fillText('*',cx+after*40*S,targetY-after*28*S);
+    out.fillText('+',cx,targetY-after*36*S);
+  }
+  out.restore();
+}
+
+/* ---------- Lily Plant & Tepals ---------- */
+function stemPt(f,u,sw,wiltAmt){
+  const sag=wiltAmt*75;
+  const hx=f.x+sw+wiltAmt*28*(f.tilt>=0?1:-1);
+  const hy=f.y+sag;
+  const cx=f.bx+(hx-f.bx)*.15,cy=hy*.55+sag*0.35;
+  const a=(1-u)*(1-u),b=2*(1-u)*u,c=u*u;
+  return[a*f.bx+b*cx+c*hx,b*cy+c*hy];
+}
+
+function drawLeaf(l,t,wiltAmt){
+  const g=easeOut((t-l.d)/2.2);if(g<=0)return;
+  const sw=Math.sin(t*.9+l.bx)*5*g;
+  const droopAng=l.ang+wiltAmt*0.42*(l.ang>=0?1:-1);
+  const tx=l.bx+Math.sin(droopAng)*l.len*g+sw;
+  const ty=l.by-Math.cos(droopAng)*l.len*g*.95+wiltAmt*36*g;
+  const cx=l.bx+Math.sin(droopAng)*l.len*.35*g,cy=L(l.by,ty,.55);
+  const nx=Math.cos(droopAng)*l.w*g*(1-wiltAmt*0.35);
+  const gr=ctx.createLinearGradient(l.bx,l.by,tx,ty);
+  gr.addColorStop(0,'#1b5e28');gr.addColorStop(.6,`hsl(105,62%,${32*l.sh+12}%)`);gr.addColorStop(1,'#a8e063');
+  ctx.fillStyle=gr;ctx.beginPath();ctx.moveTo(l.bx,l.by);
+  ctx.quadraticCurveTo(cx-nx,cy,tx,ty);ctx.quadraticCurveTo(cx+nx,cy,l.bx,l.by);ctx.fill();
+}
+
+function drawStem(f,t,wiltAmt){
+  const g=easeOut((t-f.delay)/2.3);if(g<=0)return null;
+  const sw=Math.sin(t*.8+f.ph)*5*g;
+  ctx.strokeStyle='#388e33';ctx.lineWidth=6.5;ctx.lineCap='round';ctx.beginPath();
+  const n=36;
+  for(let i=0;i<=n;i++){
+    const p=stemPt(f,i/n*g,sw,wiltAmt);
+    i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);
+  }
+  ctx.stroke();
+  ctx.strokeStyle='rgba(195,255,140,.55)';ctx.lineWidth=2;ctx.stroke();
+  return stemPt(f,g,sw,wiltAmt);
+}
+
+function drawTepal(f,isInner,a,e,sz,wiltAmt){
+  const pal=f.pal,s=Math.sin(a);
+  const ox=Math.cos(a)*1.15,oy=s*.52+.08+wiltAmt*0.35;
+  const bx=Math.cos(a)*.12,by=-1;
+  const dx=L(bx,ox,e),dy=L(by,oy,e);
+  const len=Math.hypot(dx,dy)*L(.72,1.12,e)*sz*(isInner?102:108)*(1-wiltAmt*0.16);
+  const ang=Math.atan2(dy,dx);
+  const ww=(isInner?.22:.17)*L(.45,1,e)*(1+.18*Math.max(0,s)*e)*(1-wiltAmt*0.25);
+
+  ctx.save();ctx.rotate(ang);ctx.scale(len,len);
+  const gr=ctx.createLinearGradient(0,0,1,0);
+  gr.addColorStop(0,pal.th);
+  gr.addColorStop(.28,pal.m);
+  gr.addColorStop(.78,pal.t);
+  gr.addColorStop(1,'#ffffff');
+  ctx.fillStyle=gr;
+
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.bezierCurveTo(.22,-ww*.85,.55,-ww*1.15,1,0);
+  ctx.bezierCurveTo(.55,ww*1.15,.22,ww*.85,0,0);
+  ctx.fill();
+
+  ctx.strokeStyle='rgba(0,0,0,.22)';ctx.lineWidth=.012;ctx.stroke();
+
+  ctx.strokeStyle='rgba(255,255,255,.48)';ctx.lineWidth=.014;
+  ctx.beginPath();ctx.moveTo(.05,0);ctx.lineTo(.92,0);ctx.stroke();
+
+  if(e>.2){
+    ctx.fillStyle=pal.sp;
+    for(const sp of f.spots){
+      const env=ww*.65*Math.sin(Math.PI*sp.u);
+      ctx.beginPath();ctx.arc(sp.u,sp.v*env,.015,0,6.3);ctx.fill();
     }
+  }
+  ctx.restore();
+}
 
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
+function drawFlower(f,pos,t,wiltAmt,reviveBoost){
+  const grow=easeOut((t-f.delay-1.1)/1.8);
+  if(grow<=0)return;
+  const openRaw=(t-f.delay-2.0)/2.4;
+  const baseOpen=Math.max(0.06,Math.min(back(openRaw),1.08)*f.max);
+  const e=cl(baseOpen*(1-wiltAmt*0.38)+reviveBoost*0.12);
+  const sz=f.size*L(.45,1,grow)*(1-wiltAmt*0.14+reviveBoost*0.08);
+
+  const ps=[];
+  for(let k=0;k<6;k++){
+    const a=k*(Math.PI/3)+f.a0*.4+Math.sin(t*.5+f.ph)*.03;
+    ps.push([a,k%2===1]);
+  }
+  ps.sort((p,q)=>Math.sin(p[0])-Math.sin(q[0]));
+
+  ctx.save();
+  ctx.translate(pos[0],pos[1]);
+  ctx.rotate(f.tilt+wiltAmt*0.24*(f.tilt>=0?1:-1)+Math.sin(t*.8+f.ph)*.03);
+
+  for(const[a,isInner]of ps)drawTepal(f,isInner,a,e,sz,wiltAmt);
+
+  if(e>.22){
+    const q=cl((e-.22)/.55);
+    ctx.strokeStyle=`rgba(190,235,120,${q})`;ctx.lineWidth=2.6;
+    ctx.beginPath();ctx.moveTo(0,0);ctx.quadraticCurveTo(4*sz*q,-22*sz*q,8*sz*q,-46*sz*q);ctx.stroke();
+    ctx.fillStyle=`rgba(140,200,70,${q})`;
+    ctx.beginPath();ctx.arc(8*sz*q,-46*sz*q,3.2*sz,0,6.3);ctx.fill();
+
+    for(let k=0;k<6;k++){
+      const b=k*(Math.PI/3)+.25;
+      const x=Math.cos(b)*42*sz*q;
+      const y=Math.sin(b)*18*sz*q-38*sz*q;
+      ctx.strokeStyle=`rgba(255,250,210,${q})`;ctx.lineWidth=2.1;
+      ctx.beginPath();ctx.moveTo(0,0);ctx.quadraticCurveTo(x*.35,y*.15,x,y);ctx.stroke();
+      ctx.fillStyle=`rgba(210,85,15,${q})`;
+      ctx.beginPath();ctx.ellipse(x,y,5.2*sz,2.2*sz,Math.atan2(y,x)+1.2,0,6.3);ctx.fill();
     }
+  }
+  ctx.restore();
+}
 
-    .hud {
-      position: fixed;
-      top: max(12px, env(safe-area-inset-top));
-      left: 14px;
-      right: 14px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      pointer-events: none;
-      font-size: 11px;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      z-index: 3;
+/* ---------- Narrative Stage Controller ---------- */
+// Stage 0: Initial bouquet bloom + dedication text
+// Stage 1: Click -> previous text vanishes, lilies slowly decay + health reflection appears
+// Stage 2: Click -> water drop lands on slightly decayed lilies, reviving them + affection/presence message
+// Stage 3: Click -> field of lilies with hearts & fireflies
+// Stage 4: Click -> replay from Stage 0
+const HINTS=[
+  "tap anywhere when ready for the next part",
+  "previous text fades & lilies slowly wilt · tap for the water drop",
+  "a drop of water revives the lilies · tap for the field of lilies",
+  "field of lilies, hearts & fireflies · tap to finish",
+  "tap anywhere to replay from the start"
+];
+
+let stage=0;
+let stageT0=performance.now();
+let prevStageEndT=0;
+let last=performance.now();
+
+function getStates(now){
+  const stageSec=(now-stageT0)/1000;
+  let wiltAmt=0;
+  let reviveBoost=0;
+  let fieldBlend=0;
+  let prevFadeOut=0;
+
+  if(stage===0){
+    wiltAmt=0;
+    reviveBoost=0;
+    fieldBlend=0;
+  } else if(stage===1){
+    prevFadeOut=1-easeInOut(stageSec/1.1);
+    const decayStart=1.1;
+    const decayDur=6.5;
+    wiltAmt=0.58*easeInOut((stageSec-decayStart)/decayDur);
+    reviveBoost=0;
+    fieldBlend=0;
+  } else if(stage===2){
+    const preDropWilt=0.58;
+    const hitTime=1.15;
+    const reviveDur=2.4;
+    if(stageSec<hitTime){
+      wiltAmt=preDropWilt;
+      reviveBoost=0;
+    } else {
+      const rp=easeOut((stageSec-hitTime)/reviveDur);
+      wiltAmt=L(preDropWilt,0,rp);
+      reviveBoost=rp*(1-cl((stageSec-hitTime-reviveDur)/1.8));
     }
-
-    .badge {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      padding: 5px 10px;
-      border-radius: 999px;
-      backdrop-filter: blur(6px);
-      white-space: nowrap;
-    }
-
-    .hint {
-      position: fixed;
-      bottom: max(12px, env(safe-area-inset-bottom));
-      left: 14px;
-      right: 14px;
-      text-align: center;
-      font-size: 12px;
-      color: var(--muted);
-      pointer-events: none;
-      z-index: 3;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
-    }
-  </style>
-</head>
-<body>
-  <div class="hud">
-    <div class="badge" id="sceneLabel">Scene 1 / 5 · Initial Bloom</div>
-    <div class="badge" id="clockLabel">00:00 / 03:00</div>
-  </div>
-  <canvas id="c"></canvas>
-  <div class="hint" id="hintText">Click anywhere to advance · ←/→ switch beats · Space pause</div>
-
-  <script>
-    (() => {
-      const canvas = document.getElementById("c");
-      const ctx = canvas.getContext("2d");
-      const sceneLabel = document.getElementById("sceneLabel");
-      const clockLabel = document.getElementById("clockLabel");
-      const hintText = document.getElementById("hintText");
-
-      const GLYPHS = ["@", "#", "&", "%", "$", "*", "+", "=", "~", ":", ".", "·", "♥", "♡"];
-
-      const TEXT_HEALTH = [
-        "In a lily's lifespan, there will be moments where the lily is not at its healthiest state.",
-        "Our relationship is just the same. There will be times where we are not 100 percent, and that's alright."
-      ];
-
-      const TEXT_DROP = [
-        "Just like this drop of water, even the slightest touch of your affection, your presence, or even your reassuring words",
-        "could turn our bad mornings, grumpy midnight, or lousy misunderstandings into a clear, vibrant, and cheerful moment."
-      ];
-
-      const TEXT_FIELD = [
-        "A field of lilies blooming under night hearts and fireflies,",
-        "growing steady through every season — Sincerely yours, Brandow"
-      ];
-
-      // Beat definitions:
-      // 0: Initial Bloom (bouquet blooms + welcome title)
-      // 1: Vanish & Slow Decay + Health Message
-      // 2: Water Drop Revival + Affection & Presence Message
-      // 3: Field of Lilies + Hearts & Fireflies
-      // 4: Quiet Finale / Replay Prompt
-      const SCENES = [
-        { name: "Initial Bloom", hint: "Click anywhere when ready for the next part →" },
-        { name: "Decay & Health Reflection", hint: "Watch the slow wilt & reflection · Click for the water drop →" },
-        { name: "Water Drop & Revival", hint: "A single drop brings warmth back · Click for the lily field →" },
-        { name: "Field, Hearts & Fireflies", hint: "Full field blooming · Click for finale or replay" },
-        { name: "Still Blooming", hint: "Click anywhere to replay from the start" }
-      ];
-
-      let width = 0;
-      let height = 0;
-      let dpr = 1;
-      let cols = 120;
-      let rows = 55;
-      let cellW = 10;
-      let cellH = 14;
-
-      let sceneIndex = 0;
-      let sceneStart = performance.now();
-      let paused = false;
-      let pauseAccum = 0;
-      let pauseStartedAt = 0;
-      let totalStart = performance.now();
-
-      // Particle / effect states
-      let dropAnim = {
-        active: false,
-        start: 0,
-        targetX: 0.5,
-        targetY: 0.62,
-        impacted: false,
-        impactTime: 0
-      };
-
-      const hearts = Array.from({ length: 24 }, (_, i) => ({
-        x: Math.random(),
-        y: Math.random(),
-        speed: 0.018 + Math.random() * 0.024,
-        drift: Math.random() * Math.PI * 2,
-        amp: 0.01 + Math.random() * 0.025,
-        phase: i * 0.7,
-        char: i % 3 === 0 ? "♥" : "♡",
-        color: i % 2 === 0 ? "rgba(255, 138, 178, 0.75)" : "rgba(255, 196, 216, 0.65)"
-      }));
-
-      const fireflies = Array.from({ length: 36 }, (_, i) => ({
-        x: Math.random(),
-        y: 0.15 + Math.random() * 0.72,
-        vx: (Math.random() - 0.5) * 0.03,
-        vy: (Math.random() - 0.5) * 0.02,
-        phase: Math.random() * Math.PI * 2,
-        freq: 1.5 + Math.random() * 2.5,
-        glyph: i % 2 === 0 ? "✦" : "·"
-      }));
-
-      function resize() {
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
-        width = window.innerWidth;
-        height = window.innerHeight;
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-        cellH = Math.max(12, Math.min(16, Math.floor(height / 48)));
-        cellW = Math.max(7, Math.floor(cellH * 0.62));
-        cols = Math.max(40, Math.floor(width / cellW));
-        rows = Math.max(20, Math.floor(height / cellH));
-      }
-
-      function setScene(idx) {
-        sceneIndex = ((idx % SCENES.length) + SCENES.length) % SCENES.length;
-        sceneStart = performance.now();
-        if (sceneIndex === 0) {
-          totalStart = performance.now();
-          pauseAccum = 0;
-        }
-        if (sceneIndex === 2) {
-          dropAnim = {
-            active: true,
-            start: performance.now(),
-            targetX: 0.5,
-            targetY: 0.58,
-            impacted: false,
-            impactTime: 0
-          };
-        } else {
-          dropAnim.active = false;
-        }
-        sceneLabel.textContent = `Scene ${sceneIndex + 1} / ${SCENES.length} · ${SCENES[sceneIndex].name}`;
-        hintText.textContent = SCENES[sceneIndex].hint;
-      }
-
-      function advanceScene() {
-        if (sceneIndex >= SCENES.length - 1) {
-          setScene(0);
-        } else {
-          setScene(sceneIndex + 1);
-        }
-      }
-
-      function getVitality(sceneIdx, localSec, now) {
-        // 0 = healthy/vibrant, -1 = decayed/wilted
-        if (sceneIdx === 0) {
-          return Math.min(1, localSec / 2.2);
-        }
-        if (sceneIdx === 1) {
-          // Smoothly decays over ~9 seconds after entering Scene 1
-          const decayProg = Math.min(1, localSec / 9.0);
-          const eased = decayProg * decayProg * (3 - 2 * decayProg);
-          return 1 - eased * 1.45; // down to -0.45 (wilted & muted)
-        }
-        if (sceneIdx === 2) {
-          // Starts wilted, revives sharply once water drop hits (~1.1s)
-          const impactDelay = 1.1;
-          if (localSec < impactDelay) {
-            return -0.45;
-          }
-          const reviveProg = Math.min(1, (localSec - impactDelay) / 2.6);
-          const eased = 1 - Math.pow(1 - reviveProg, 3);
-          return -0.45 + eased * 1.45;
-        }
-        if (sceneIdx === 3) {
-          return 1.0 + 0.06 * Math.sin(now * 0.002);
-        }
-        return 0.85 + 0.08 * Math.sin(now * 0.0015);
-      }
-
-      function drawLilyHead(cx, cy, radius, openAmount, droop, vitality, hueShift, sway, glyphSeed) {
-        const petalCount = 6;
-        const wiltFactor = Math.max(0, -vitality);
-        const bloomScale = Math.max(0.28, vitality > 0 ? 0.45 + 0.55 * openAmount : 0.72 - 0.25 * wiltFactor);
-
-        // Stamen / center
-        ctx.font = `${Math.max(10, Math.floor(cellH * 0.9))}px monospace`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = vitality < 0 ? "rgba(180, 155, 95, 0.55)" : "#ffd966";
-        ctx.fillText("✿", cx + sway * 0.5, cy + droop * 0.5);
-
-        for (let p = 0; p < petalCount; p++) {
-          const angle = (p / petalCount) * Math.PI * 2 + sway * 0.025;
-          const spread = radius * bloomScale * (0.65 + 0.35 * openAmount);
-          const px = cx + Math.cos(angle) * spread + sway;
-          const py = cy + Math.sin(angle) * spread * 0.82 + droop + wiltFactor * 14;
-
-          const glyphIdx = Math.abs(Math.floor(glyphSeed + p * 3 + openAmount * 5)) % GLYPHS.length;
-          const ch = vitality < -0.15 && p % 2 === 0 ? "." : GLYPHS[glyphIdx];
-
-          if (vitality < 0) {
-            const g = Math.max(65, Math.floor(155 + vitality * 60));
-            ctx.fillStyle = `rgba(${g + 20}, ${g}, ${Math.max(55, g - 25)}, ${Math.max(0.25, 0.72 + vitality * 0.4)})`;
-          } else {
-            const bright = Math.min(1, 0.55 + 0.45 * Math.max(0, vitality));
-            ctx.fillStyle = (p + hueShift) % 2 === 0
-              ? `rgba(255, 246, 224, ${bright})`
-              : `rgba(255, 194, 214, ${bright})`;
-          }
-
-          ctx.fillText(ch, px, py);
-        }
-      }
-
-      function drawStemAndLeaves(baseX, baseY, topX, topY, vitality, sway, phase) {
-        const wiltSag = Math.max(0, -vitality) * 28;
-        const midX = (baseX + topX) * 0.5 + sway * 0.6;
-        const midY = (baseY + topY) * 0.5 + wiltSag * 0.5;
-        const endX = topX + sway;
-        const endY = topY + wiltSag;
-
-        const steps = 14;
-        ctx.font = `${Math.max(10, Math.floor(cellH * 0.85))}px monospace`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-
-        for (let i = 0; i <= steps; i++) {
-          const t = i / steps;
-          const inv = 1 - t;
-          const x = inv * inv * baseX + 2 * inv * t * midX + t * t * endX;
-          const y = inv * inv * baseY + 2 * inv * t * midY + t * t * endY;
-
-          if (vitality < 0) {
-            ctx.fillStyle = `rgba(112, 118, 82, ${Math.max(0.22, 0.68 + vitality * 0.4)})`;
-          } else {
-            ctx.fillStyle = `rgba(92, 205, 128, ${Math.min(0.95, 0.45 + 0.5 * Math.max(0, vitality))})`;
-          }
-          ctx.fillText(t > 0.7 ? "/" : "|", x, y);
-
-          if (i === 5 || i === 9) {
-            const dir = (i + Math.floor(phase)) % 2 === 0 ? 1 : -1;
-            const leafDrop = Math.max(0, -vitality) * 14;
-            ctx.fillStyle = vitality < 0 ? "rgba(125, 122, 78, 0.5)" : "rgba(122, 226, 152, 0.85)";
-            ctx.fillText(dir > 0 ? "\\~" : "~/ ", x + dir * 12, y + leafDrop);
-          }
-        }
-      }
-
-      function drawWaterDropAndRipple(now, localSec) {
-        if (!dropAnim.active) return;
-
-        const impactDelay = 1.1;
-        const tx = width * dropAnim.targetX;
-        const ty = height * dropAnim.targetY;
-
-        ctx.font = `bold ${Math.max(14, Math.floor(cellH * 1.15))}px monospace`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-
-        if (localSec < impactDelay) {
-          const p = localSec / impactDelay;
-          const startY = height * 0.12;
-          const curY = startY + (ty - startY) * (p * p);
-          const wobble = Math.sin(now * 0.02) * 3;
-          ctx.fillStyle = "rgba(120, 215, 255, 0.95)";
-          ctx.fillText("💧", tx + wobble, curY);
-          ctx.fillStyle = "rgba(155, 230, 255, 0.75)";
-          ctx.fillText("|", tx + wobble, curY - cellH);
-        } else {
-          const after = localSec - impactDelay;
-          if (after < 3.2) {
-            const alpha = Math.max(0, 1 - after / 3.2);
-            const r1 = after * 75;
-            const r2 = Math.max(0, (after - 0.35) * 65);
-
-            ctx.save();
-            ctx.strokeStyle = `rgba(125, 220, 255, ${alpha * 0.75})`;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.ellipse(tx, ty + 18, r1, r1 * 0.28, 0, 0, Math.PI * 2);
-            ctx.stroke();
-
-            if (r2 > 0) {
-              ctx.strokeStyle = `rgba(180, 240, 255, ${alpha * 0.5})`;
-              ctx.beginPath();
-              ctx.ellipse(tx, ty + 18, r2, r2 * 0.28, 0, 0, Math.PI * 2);
-              ctx.stroke();
-            }
-
-            // Sparkle droplets rising slightly on revival
-            ctx.fillStyle = `rgba(150, 232, 255, ${alpha})`;
-            ctx.fillText("✦", tx - after * 26, ty - after * 18);
-            ctx.fillText("✦", tx + after * 28, ty - after * 22);
-            ctx.restore();
-          }
-        }
-      }
-
-      function drawBackgroundParticles(now, dt, showHearts, showFireflies, vitality) {
-        if (showHearts) {
-          ctx.font = `${Math.max(12, Math.floor(cellH * 0.95))}px monospace`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          for (const h of hearts) {
-            h.y -= h.speed * dt;
-            h.phase += dt * 1.6;
-            if (h.y < -0.06) {
-              h.y = 1.05;
-              h.x = Math.random();
-            }
-            const hx = (h.x + Math.sin(h.phase + h.drift) * h.amp) * width;
-            const hy = h.y * height;
-            ctx.fillStyle = h.color;
-            ctx.fillText(h.char, hx, hy);
-          }
-        }
-
-        if (showFireflies) {
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          for (const f of fireflies) {
-            f.x += f.vx * dt + Math.sin(now * 0.0012 + f.phase) * 0.008 * dt;
-            f.y += f.vy * dt + Math.cos(now * 0.0015 + f.phase) * 0.008 * dt;
-            if (f.x < 0.02) f.x = 0.98;
-            if (f.x > 0.98) f.x = 0.02;
-            if (f.y < 0.12) f.y = 0.85;
-            if (f.y > 0.88) f.y = 0.14;
-
-            const pulse = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now * 0.004 * f.freq + f.phase));
-            const fx = f.x * width;
-            const fy = f.y * height;
-
-            ctx.font = `${Math.max(11, Math.floor(cellH * (0.8 + pulse * 0.35)))}px monospace`;
-            ctx.fillStyle = `rgba(255, 236, 130, ${pulse})`;
-            ctx.fillText(f.glyph, fx, fy);
-          }
-        }
-      }
-
-      function drawTextOverlay(lines, alpha, yStartRatio) {
-        if (alpha <= 0.02 || !lines || !lines.length) return;
-
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-        const fontSize = Math.max(12, Math.min(16, Math.floor(width / 68)));
-        ctx.font = `${fontSize}px monospace`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-
-        const maxTextWidth = Math.min(width * 0.84, 780);
-        const wrappedLines = [];
-
-        for (const rawLine of lines) {
-          const words = rawLine.split(" ");
-          let current = "";
-          for (const word of words) {
-            const test = current ? `${current} ${word}` : word;
-            if (ctx.measureText(test).width <= maxTextWidth) {
-              current = test;
-            } else {
-              if (current) wrappedLines.push(current);
-              current = word;
-            }
-          }
-          if (current) wrappedLines.push(current);
-          wrappedLines.push("");
-        }
-        if (wrappedLines.length && wrappedLines[wrappedLines.length - 1] === "") {
-          wrappedLines.pop();
-        }
-
-        const lineHeight = fontSize * 1.55;
-        const boxHeight = wrappedLines.length * lineHeight + 24;
-        const startY = Math.max(46, height * yStartRatio);
-
-        ctx.fillStyle = "rgba(7, 10, 20, 0.68)";
-        ctx.strokeStyle = "rgba(244, 236, 208, 0.16)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(
-          (width - Math.min(width * 0.9, maxTextWidth + 44)) * 0.5,
-          startY - 12,
-          Math.min(width * 0.9, maxTextWidth + 44),
-          boxHeight,
-          12
-        );
-        ctx.fill();
-        ctx.stroke();
-
-        wrappedLines.forEach((line, idx) => {
-          if (!line) return;
-          const isSignature = line.includes("Sincerely yours, Brandow");
-          ctx.fillStyle = isSignature ? "#ffd3e2" : "#f4ecd0";
-          ctx.fillText(line, width * 0.5, startY + idx * lineHeight);
-        });
-
-        ctx.restore();
-      }
-
-      let lastFrame = performance.now();
-
-      function render(now) {
-        const rawDt = Math.min(0.08, (now - lastFrame) / 1000);
-        lastFrame = now;
-        const dt = paused ? 0 : rawDt;
-
-        if (!paused) {
-          const localSec = (now - sceneStart - pauseAccum) / 1000;
-          const totalSec = Math.min(180, (now - totalStart - pauseAccum) / 1000);
-          const mins = Math.floor(totalSec / 60);
-          const secs = Math.floor(totalSec % 60);
-          clockLabel.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")} / 03:00`;
-
-          // Clear frame with subtle trail
-          ctx.fillStyle = "rgba(7, 10, 20, 0.34)";
-          ctx.fillRect(0, 0, width, height);
-
-          const vitality = getVitality(sceneIndex, localSec, now);
-          const sway = Math.sin(now * 0.0014) * 5;
-
-          const showHearts = sceneIndex === 3 || sceneIndex === 4;
-          const showFireflies = sceneIndex === 3 || sceneIndex === 4;
-          drawBackgroundParticles(now, dt, showHearts, showFireflies, vitality);
-
-          // Determine bouquet vs field layout
-          if (sceneIndex === 3 || sceneIndex === 4) {
-            // Field of lilies across lower/mid canvas
-            const fieldProgress = sceneIndex === 3 ? Math.min(1, localSec / 3.5) : 1;
-            const lilyCount = Math.max(7, Math.min(15, Math.floor(cols / 9)));
-            const baseGroundY = height * 0.92;
-
-            for (let i = 0; i < lilyCount; i++) {
-              const frac = lilyCount === 1 ? 0.5 : i / (lilyCount - 1);
-              const stagger = Math.max(0, Math.min(1, (fieldProgress - frac * 0.35) / 0.65));
-              if (stagger <= 0 && sceneIndex === 3) continue;
-
-              const rowDepth = i % 2 === 0 ? 0.0 : -0.05;
-              const bx = width * (0.08 + frac * 0.84);
-              const by = baseGroundY + height * rowDepth;
-              const stemHeight = (height * (0.24 + (i % 3) * 0.045)) * (0.35 + 0.65 * stagger);
-              const tx = bx + (frac - 0.5) * 18;
-              const ty = by - stemHeight;
-
-              const localSway = sway * (0.7 + (i % 4) * 0.2) + Math.cos(now * 0.0011 + i) * 3;
-              drawStemAndLeaves(bx, by, tx, ty, vitality, localSway, i);
-              drawLilyHead(
-                tx + localSway,
-                ty,
-                Math.max(16, Math.min(28, width * 0.022)),
-                stagger,
-                0,
-                vitality,
-                i,
-                localSway,
-                i * 7 + now * 0.0015
-              );
-            }
-          } else {
-            // Signature bouquet cluster
-            const bouquetBaseX = width * 0.5;
-            const bouquetBaseY = height * 0.9;
-            const stems = [
-              { dx: -48, topDx: -72, hRatio: 0.29, headR: 24, phase: 0.2 },
-              { dx: -24, topDx: -36, hRatio: 0.35, headR: 28, phase: 1.1 },
-              { dx: 0,    topDx: 0,   hRatio: 0.39, headR: 31, phase: 2.0 },
-              { dx: 24,   topDx: 36,  hRatio: 0.35, headR: 28, phase: 2.9 },
-              { dx: 48,   topDx: 72,  hRatio: 0.29, headR: 24, phase: 3.8 }
-            ];
-
-            stems.forEach((s, idx) => {
-              const bx = bouquetBaseX + s.dx;
-              const by = bouquetBaseY;
-              const tx = bouquetBaseX + s.topDx;
-              const ty = bouquetBaseY - height * s.hRatio;
-              const localSway = sway * (0.8 + idx * 0.12);
-              const openAmt = sceneIndex === 0 ? Math.min(1, localSec / 2.4) : 1;
-
-              drawStemAndLeaves(bx, by, tx, ty, vitality, localSway, s.phase);
-              drawLilyHead(
-                tx + localSway,
-                ty,
-                s.headR,
-                openAmt,
-                0,
-                vitality,
-                idx,
-                localSway,
-                idx * 5 + now * 0.0015
-              );
-            });
-          }
-
-          if (sceneIndex === 2) {
-            drawWaterDropAndRipple(now, localSec);
-          }
-
-          // Text overlays per scene
-          if (sceneIndex === 0) {
-            const a = Math.min(1, Math.max(0, (localSec - 0.8) / 1.5));
-            drawTextOverlay(
-              ["For Emy — Lily Bouquet", "Click the screen when you're ready to see the next part."],
-              a,
-              0.12
-            );
-          } else if (sceneIndex === 1) {
-            // Previous text vanishes first (0s-1.2s), then health message fades in (2.2s+)
-            const healthAlpha = Math.min(1, Math.max(0, (localSec - 2.2) / 1.8));
-            drawTextOverlay(TEXT_HEALTH, healthAlpha, 0.11);
-          } else if (sceneIndex === 2) {
-            const dropTextAlpha = Math.min(1, Math.max(0, (localSec - 1.3) / 1.8));
-            drawTextOverlay(TEXT_DROP, dropTextAlpha, 0.11);
-          } else if (sceneIndex === 3 || sceneIndex === 4) {
-            const fieldAlpha = sceneIndex === 3 ? Math.min(1, Math.max(0, (localSec - 1.2) / 1.8)) : 1;
-            drawTextOverlay(TEXT_FIELD, fieldAlpha, 0.10);
-          }
-        }
-
-        requestAnimationFrame(render);
-      }
-
-      window.addEventListener("resize", resize);
-      canvas.addEventListener("pointerdown", () => {
-        if (!paused) advanceScene();
-      });
-
-      window.addEventListener("keydown", (e) => {
-        if (e.key === "ArrowRight") {
-          setScene(sceneIndex + 1);
-        } else if (e.key === "ArrowLeft") {
-          setScene(sceneIndex - 1);
-        } else if (e.code === "Space") {
-          e.preventDefault();
-          paused = !paused;
-          if (paused) {
-            pauseStartedAt = performance.now();
-            hintText.textContent = "Paused · Press Space to resume";
-          } else {
-            pauseAccum += performance.now() - pauseStartedAt;
-            hintText.textContent = SCENES[sceneIndex].hint;
-          }
-        }
-      });
-
-      resize();
-      setScene(0);
-      requestAnimationFrame(render);
-    })();
-  </script>
-</body>
-</html>
+    fieldBlend=0;
+  } else if(stage===3){
+    wiltAmt=0;
+    reviveBoost=0.15*(1-cl(stageSec/2.5));
+    fieldBlend=easeInOut(stageSec/2.8);
+  } else {
+    wiltAmt=0;
+    reviveBoost=0;
+    fieldBlend=1;
+  }
+
+  return{stageSec,wiltAmt,reviveBoost,fieldBlend,prevFadeOut};
+}
+
+addEventListener('pointerdown',()=>{
+  const now=performance.now();
+  prevStageEndT=(now-stageT0)/1000;
+  stage=(stage+1)%5;
+  stageT0=now;
+  hintEl.textContent=HINTS[stage];
+});
+
+function frame(now){
+  const nowSec=now/1000;
+  const dt=Math.min((now-last)/1000,.05);last=now;
+  const {stageSec,wiltAmt,reviveBoost,fieldBlend,prevFadeOut}=getStates(now);
+
+  const revealProgress=easeOut((stageSec-4.6)/1.8);
+  const bouquetShift=stage===0&&W>780?-Math.min(W*0.21,235)*revealProgress:0;
+
+  ctx=octx;ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.fillStyle='#000';ctx.fillRect(0,0,COLS,ROWS);
+  ctx.setTransform(COLS/W,0,0,ROWS/H,0,0);
+  drawHearts(nowSec,dt,stage===3||stage===4);
+
+  const baseY=W<=780?H*0.96:H*0.93;
+  const mobileScale=W<=780?S*0.85:S;
+
+  // Original bouquet cluster
+  if(fieldBlend<0.999){
+    ctx.save();
+    ctx.globalAlpha=1-fieldBlend;
+    ctx.translate(W/2+bouquetShift,baseY);
+    ctx.scale(mobileScale,mobileScale);
+
+    const animT=stage===2&&stageSec>=1.15?prevStageEndT+3.2+(stageSec-1.15)*0.8:prevStageEndT+stageSec;
+    const tips=flowers.map(f=>drawStem(f,animT,wiltAmt));
+    leaves.forEach(l=>drawLeaf(l,animT,wiltAmt));
+    flowers.forEach((f,i)=>{if(tips[i])drawFlower(f,tips[i],animT,wiltAmt,reviveBoost)});
+    ctx.restore();
+  }
+
+  // Expanded field of lilies in Stage 3 & Stage 4
+  if(fieldBlend>0.001){
+    ctx.save();
+    ctx.globalAlpha=fieldBlend;
+    const fieldScale=Math.min(W/1020,H/760)*(W<=780?0.78:1.0);
+    ctx.translate(W/2,H*0.96);
+    ctx.scale(fieldScale,fieldScale);
+
+    const fieldT=1.5+stageSec;
+    const fTips=fieldFlowers.map(f=>drawStem(f,fieldT,0));
+    fieldFlowers.forEach((f,i)=>{if(fTips[i])drawFlower(f,fTips[i],fieldT,0,reviveBoost)});
+    ctx.restore();
+  }
+
+  ctx.globalAlpha=1;
+  out.setTransform(DPR,0,0,DPR,0,0);
+  drawSky(nowSec);
+  toAscii(nowSec,wiltAmt,reviveBoost);
+
+  if(stage===2){
+    drawWaterDrop(stageSec,nowSec);
+  }
+
+  if(stage===3||stage===4){
+    drawFireflies(nowSec,dt,fieldBlend);
+  }
+
+  drawAsciiMessage(stage,stageSec,prevFadeOut,nowSec);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script></body></html>
